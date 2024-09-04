@@ -1,69 +1,56 @@
 #include "Spider.h"
 
-//queue <string> s_queue;
-queue<function<void()>> s_queue;
+queue <string> s_queue;
 
-Spider::Spider(const string& startURL, const int& depth, const string& port) {
+Spider::Spider(const string& startURL, const int& depth, const string& port, IniParser& IniParser) {
 	this->start_url = startURL;
 	this->depth_ = depth;
 	this->port_ = port;
-	findsLinks.emplace_back(start_url);
+	s_queue.emplace(start_url);
+	db["host"] = IniParser.get_data("host");
+	db["port"] = IniParser.get_data("port");
+	db["dbname"] = IniParser.get_data("dbname");
+	db["user"] = IniParser.get_data("user");
+	db["password"] = IniParser.get_data("password");
 }
 
 void Spider::startSpider() {
-	work();
-}
-	/*for (size_t i = 0; i < size_thread; i++) {
-		threads.push_back(thread(&Spider::thread_pool));
-	}
-	{
-		lock_guard<mutex> lock(mtx);
-		s_queue.push([&] {work(); });
-		cond.notify_one();
-	}
-	
-	for (auto& t : threads) {
-		t.join();
-	}
-}
-
-void Spider::thread_pool() {
-	/*if (depth_ == 2) {
-		this_thread::sleep_for(std::chrono::seconds(2));
-		{
-			std::lock_guard<std::mutex> lock(mtx);
-			thread_finish = true;
-			cond.notify_all();
-			return;
+	int size_queue;
+	while (depth_ > 0) {
+		depth_--;
+		auto work = [&](int& size) {
+			while (size > 0) {
+				unique_lock<mutex> lock(mtx);
+				size--;
+				auto link = s_queue.front();
+				usedLinks.push_back(link);
+				s_queue.pop();
+				string HTML = loadHTTP(link);
+				lock.unlock();
+				ParserURL(HTML, link);
+			}
+		};
+		size_queue = s_queue.size();
+		if (s_queue.size() == 1) {
+			work(size_queue);
 		}
-
+		else if (s_queue.size() > 1) {
+			for (size_t i = 0; i < size_thread; i++) {
+				threads.emplace_back(work, ref(size_queue));
+				size_queue--;
+			}
+			for (auto& t : threads) {
+				cond.notify_all();
+				t.join();
+			}
+		}
 	}
-	unique_lock<mutex> lock(mtx);
-	if ((thread_finish == false) || !s_queue.empty()) {
-		if (s_queue.empty()) {
-			cond.wait(lock);
-		}
-		else {
-			auto queue = s_queue.front();		
-			s_queue.pop();
-			lock.unlock();
-			queue();
-			lock.lock();
-		}
-	}*/
-//}
-
-void Spider::work(){
-	    usedLinks.push_back(findsLinks.front());
-		string url = findsLinks.front();
-		findsLinks.erase(findsLinks.begin());
-		string HTML = loadHTTP(url);
-		ParserURL(HTML);
 }
 
-string Spider::loadHTTP(const string& url) {
+string Spider::loadHTTP(const string& link) {
 	try {
-		vector <string> datas = LinkDatas(url);
+		net::io_context ioc;
+		vector <string> datas = LinkDatas(link);
 		if (datas[0] == "https:") {
 			ssl::context ctx(ssl::context::tlsv12_client);
 			ctx.set_default_verify_paths();
@@ -77,36 +64,32 @@ string Spider::loadHTTP(const string& url) {
 				beast::error_code ec{ static_cast<int>(::ERR_get_error()), net::error::get_ssl_category() };
 				throw beast::system_error{ ec };
 			}
-				tcp::resolver resolver(ioc);
+			tcp::resolver resolver(ioc);
+			auto const results = resolver.resolve({ datas[1], "https" });
+			get_lowest_layer(stream).connect(results);
+			get_lowest_layer(stream).expires_after(chrono::seconds(30));
+			http::request<http::empty_body> req{ http::verb::get, datas[2], 11 };
+			req.set(http::field::host, datas[1]);
+			req.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
+			stream.handshake(ssl::stream_base::client);
+			http::write(stream, req);
+			beast::flat_buffer buffer;
+			http::response<http::dynamic_body> res;
+			http::read(stream, buffer, res);
+			string sBody = beast::buffers_to_string(res.body().data());
 
-				auto const results = resolver.resolve({ datas[1], port_ });
-				get_lowest_layer(stream).connect(results);
-				http::request<http::string_body> req{ http::verb::get, datas[2], 11 };
-				req.set(http::field::host, datas[1]);
-				req.set(http::field::user_agent, BOOST_BEAST_VERSION_STRING);
-				stream.handshake(ssl::stream_base::client);
-				http::write(stream, req);
-				beast::flat_buffer buffer;
-				http::response<http::dynamic_body> res;
-				http::read(stream, buffer, res);
-				string sBody = beast::buffers_to_string(res.body().data());
-
-				beast::error_code ec;
-				stream.shutdown(ec);
-				if (ec == net::error::eof) {
-					ec = {};
-				}
-
-				if (ec) {
-					throw beast::system_error{ ec };
-				}
-				//cout << res << endl;
+			beast::error_code ec;
+			if (ec == net::ssl::error::stream_truncated) {
 				return sBody;
+			}
+			stream.shutdown(ec);
+			
+			return sBody;
 		}
 		else {
 			tcp::resolver resolver(ioc);
 			beast::tcp_stream stream(ioc);
-			auto const results = resolver.resolve(datas[1], port_);
+			auto const results = resolver.resolve(datas[1], "http");
 			stream.connect(results);
 			http::request<http::string_body> req{ http::verb::get, datas[2], 10};
 			req.set(http::field::host, datas[1]);
@@ -119,24 +102,22 @@ string Spider::loadHTTP(const string& url) {
 			
 			beast::error_code ec;
 			stream.socket().shutdown(tcp::socket::shutdown_both, ec);
-
-			if (ec && ec != beast::errc::not_connected)
-				throw beast::system_error{ ec };
 			return sBody;
 		}
 	}
+	
     catch (exception const& e)
     {
 		cerr << "Error: " << e.what() << endl;
     }
 }
 
-vector<string> Spider::LinkDatas(const string& url) {
+vector<string> Spider::LinkDatas(const string& link) {
 	vector<string> datas;
 	string line;
-	auto slesh2 = url.find("//");
-	datas.push_back(url.substr(0, slesh2));
-	line = url.substr(slesh2 + 2, url.length());
+	auto slesh2 = link.find("//");
+	datas.push_back(link.substr(0, slesh2));
+	line = link.substr(slesh2 + 2, link.length());
 	auto slesh = line.find("/");
 	datas.push_back(line.substr(0, slesh));
 	datas.push_back(line.substr(slesh, line.length()));
@@ -144,87 +125,123 @@ vector<string> Spider::LinkDatas(const string& url) {
 }
 
 
-int Spider::ParserURL(const string& html) {
+void Spider::ParserURL(const string& html, const string& link) {
 	try {
-		//const char* html = "<!DOCTYPE html><html><body><div>Content 1</div><p>Paragraph</p><div>Content 2</div></body></html>";
 		htmlDocPtr doc = htmlReadMemory(html.c_str(), html.length(), nullptr, nullptr, HTML_PARSE_RECOVER | HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
 		if (doc == NULL) {
-			cerr << "Failed to parse HTML" << std::endl;
-			return -1;
+			cerr << "Failed to parse HTML" << endl;
+			return;
 		}
+		
 		xmlNodePtr root = xmlDocGetRootElement(doc);
 		if (root == NULL) {
 			cout << "Empty document\n";
-			xmlFreeDoc(doc);
-			return -1;
+			xmlFree(doc);
+			return;
 		}
+		string result = "";
+		ExtractText(root, result);
+		DeletePunct(result);
 		xmlXPathContextPtr context = xmlXPathNewContext(doc);
-		xmlXPathObjectPtr html_tags = xmlXPathEvalExpression((const xmlChar*)"//div/text()", context);
-		if (html_tags == NULL) {
-			cout << "Failed to evaluate XPath expression\n";
-			xmlXPathFreeContext(context);
-			xmlFreeDoc(doc);
-			return -1;
-		}
-		xmlNodeSetPtr nodes = html_tags->nodesetval;
-		for (int i = 0; i < nodes->nodeNr; i++) {
-			xmlNodePtr tag = nodes->nodeTab[i];
-			xmlXPathSetContextNode(tag, context);
-			xmlUnlinkNode(tag);
-			xmlFree(tag);
-			tag = NULL;
-		}
-		/*xmlXPathObjectPtr html_urls = xmlXPathEvalExpression((const xmlChar*)"//a/@href", context);
-
-		//xmlNodePtr html_url = html_urls->nodesetval;
-			//xmlXPathEvalExpression((xmlChar*)"/html/body//a", context)->nodesetval->nodeTab[0];
+		xmlXPathObjectPtr html_urls = xmlXPathEvalExpression((const xmlChar*)"//a[starts-with(@href, 'https://')]", context);
 		if (html_urls == NULL) {
 			cout << "Failed to evaluate XPath expression\n";
 			xmlXPathFreeContext(context);
-			xmlFreeDoc(doc);
-			return -1;
+			xmlFree(doc);
+			return;
 		}
 		for (int i = 0; i < html_urls->nodesetval->nodeNr; i++) {
 			xmlNodePtr html_url = html_urls->nodesetval->nodeTab[i];
 			string url = string(reinterpret_cast<char*>(xmlGetProp(html_url, (xmlChar*)"href")));
-			//xmlDocDumpMemory((xmlDocPtr)notekey, &s, &size)
-			findsLinks.push_back(url);
+			bool usedURL;
+			for (const auto& i : usedLinks) {
+				if (i == url) {
+					usedURL = true;
+				}
+				else {
+					usedURL = false;
+				}
+			}
+			if (usedURL == false) {
+				s_queue.emplace(url);
+			}
 			xmlFree(html_url);
 			html_url = NULL;
-		}*/
-		xmlXPathFreeObject(html_tags);
-		//xmlXPathFreeObject(html_urls);
+		}
+		
+		xmlXPathFreeObject(html_urls);
 		xmlXPathFreeContext(context);
-		xmlChar* html_buffer;
-		int buffer_size;
-		xmlDocDumpFormatMemory(doc, &html_buffer, &buffer_size, 1);
-		//printf("%s", (char*)html_buffer);
-		cout << html_buffer;
-		// Очистка памяти
-		xmlFree(html_buffer);
-		xmlFreeDoc(doc);
+		xmlFree(doc);
 		xmlCleanupParser();
-	}
+		LoadtoDB(result, link);
+		finish = true;
+	} 
 	catch (exception const& e)
 	{
 		cerr << "Error: " << e.what() << endl;
 	}
-	return 0;
 }
 
-void Spider::remove_node(xmlNodePtr node) {
-	if (node != NULL) {
-		xmlUnlinkNode(node);
-		xmlFreeNode(node);
+void Spider::ExtractText(xmlNode* node, string& result) {
+	for (xmlNode* curnode = node; curnode; curnode = curnode->next) {
+		if (curnode->type == XML_TEXT_NODE) {
+			xmlChar* text = xmlNodeGetContent(curnode);
+			if (nullptr != text) {
+				result += reinterpret_cast<const char*>(text);
+				result += " ";
+			}
+			xmlFree(text);
+		}
+		ExtractText(curnode->children, result);
 	}
 }
-/*
-inline void Spider::ltrim(string& s) {
-	s.erase(s.begin(), find_if(s.begin(), s.end(), [](int ch) {
-		return !isspace(ch);
-		}));
-}*/
 
-void Spider::LoadtoDB() {
+string Spider::DeletePunct(string& result) {
+	boost::replace_all(result, "\n", " ");
+	boost::replace_all(result, "\t", " ");
+	boost::replace_all(result, "\"", " ");
+	boost::replace_all(result, "=", " ");
+	boost::replace_all(result, ".", " ");
+	boost::replace_all(result, ",", " ");
+	boost::replace_all(result, "-", " ");
+	boost::replace_all(result, "[", " ");
+	boost::replace_all(result, "]", " ");
+	boost::replace_all(result, "(", " ");
+	boost::replace_all(result, ")", " ");
+	boost::replace_all(result, ";", " ");
+	boost::replace_all(result, ":", " ");
+	boost::replace_all(result, "/", " ");
+	boost::replace_all(result, "#", " ");
+	boost::replace_all(result, "'", " ");
+	boost::replace_all(result, "$", " ");
+	boost::replace_all(result, "?", " ");
+	boost::replace_all(result, "!", " ");
+	for (int i = 0; i < 10; i++) {
+		string x = to_string(i);
+		boost::replace_all(result, x, "");
+	}
+	while (result.find("  ") != string::npos) {
+		boost::replace_all(result, "  ", " ");
+	}
+	return result;
+}
 
+void Spider::LoadtoDB(string& result, const string& link) {
+	map<string, int> words;
+	istringstream i(result);
+	string word;
+	while (i >> word) {
+		if ((word.length() < 33) && (word.length() > 3)) {
+			for (int i = 0; i < word.length(); i++) {
+				if (word[i] >= 'A' && word[i] <= 'Z') {
+					word[i] += 32;
+				}
+			}
+			words[word]++;
+		}
+	}
+	int x = 1;
+	unique_lock<mutex> lock(mtx);
+	database.SaveDatasToDB(words, link, db);
+	lock.unlock();
 }
