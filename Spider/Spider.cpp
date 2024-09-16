@@ -39,11 +39,12 @@ void Spider::startSpider() {
 				threads.emplace_back(work, ref(size_queue));
 				size_queue--;
 			}
-			for (auto& t : threads) {
-				cond.notify_all();
-				t.join();
-			}
+			
 		}
+	}
+	for (auto& t : threads) {
+		cond.notify_all();
+		t.join();
 	}
 }
 
@@ -63,6 +64,7 @@ string Spider::loadHTTP(const string& link) {
 			{
 				beast::error_code ec{ static_cast<int>(::ERR_get_error()), net::error::get_ssl_category() };
 				throw beast::system_error{ ec };
+				return "";
 			}
 			tcp::resolver resolver(ioc);
 			auto const results = resolver.resolve({ datas[1], "https" });
@@ -79,7 +81,15 @@ string Spider::loadHTTP(const string& link) {
 			string sBody = beast::buffers_to_string(res.body().data());
 
 			beast::error_code ec;
-			if (ec == net::ssl::error::stream_truncated) {
+			if (ec == ssl::error::stream_truncated) {
+				return sBody;
+			}
+			if (ec == net::error::eof) {
+				ec = {};
+				return sBody;
+			}
+			if (ec) {
+				throw beast::system_error{ ec };
 				return sBody;
 			}
 			stream.shutdown(ec);
@@ -101,6 +111,17 @@ string Spider::loadHTTP(const string& link) {
 			string sBody = beast::buffers_to_string(res.body().data());
 			
 			beast::error_code ec;
+			if (ec == ssl::error::stream_truncated) {
+				return sBody;
+			}
+			if (ec == net::error::eof) {
+				ec = {};
+				return sBody;
+			}
+			if (ec) {
+				throw beast::system_error{ ec };
+				return sBody;
+			}
 			stream.socket().shutdown(tcp::socket::shutdown_both, ec);
 			return sBody;
 		}
@@ -109,6 +130,7 @@ string Spider::loadHTTP(const string& link) {
     catch (exception const& e)
     {
 		cerr << "Error: " << e.what() << endl;
+		return "0";
     }
 }
 
@@ -119,8 +141,14 @@ vector<string> Spider::LinkDatas(const string& link) {
 	datas.push_back(link.substr(0, slesh2));
 	line = link.substr(slesh2 + 2, link.length());
 	auto slesh = line.find("/");
-	datas.push_back(line.substr(0, slesh));
-	datas.push_back(line.substr(slesh, line.length()));
+	if (slesh > 100 ) {
+		datas.push_back(line.substr(0, line.length()));
+		datas.push_back("");
+	}
+	else {
+		datas.push_back(line.substr(0, slesh));
+		datas.push_back(line.substr(slesh, line.length()));
+	}
 	return datas;
 }
 
@@ -129,6 +157,7 @@ void Spider::ParserURL(const string& html, const string& link) {
 	try {
 		htmlDocPtr doc = htmlReadMemory(html.c_str(), html.length(), nullptr, nullptr, HTML_PARSE_RECOVER | HTML_PARSE_NOERROR | HTML_PARSE_NOWARNING);
 		if (doc == NULL) {
+			auto x = link;
 			cerr << "Failed to parse HTML" << endl;
 			return;
 		}
@@ -143,7 +172,7 @@ void Spider::ParserURL(const string& html, const string& link) {
 		ExtractText(root, result);
 		DeletePunct(result);
 		xmlXPathContextPtr context = xmlXPathNewContext(doc);
-		xmlXPathObjectPtr html_urls = xmlXPathEvalExpression((const xmlChar*)"//a[starts-with(@href, 'https://')]", context);
+		xmlXPathObjectPtr html_urls = xmlXPathEvalExpression((const xmlChar*)"//a[@href]", context);
 		if (html_urls == NULL) {
 			cout << "Failed to evaluate XPath expression\n";
 			xmlXPathFreeContext(context);
@@ -153,16 +182,23 @@ void Spider::ParserURL(const string& html, const string& link) {
 		for (int i = 0; i < html_urls->nodesetval->nodeNr; i++) {
 			xmlNodePtr html_url = html_urls->nodesetval->nodeTab[i];
 			string url = string(reinterpret_cast<char*>(xmlGetProp(html_url, (xmlChar*)"href")));
-			bool usedURL;
-			for (const auto& i : usedLinks) {
-				if (i == url) {
-					usedURL = true;
-				}
-				else {
-					usedURL = false;
-				}
+			auto l = url.find("#");
+			if (l < 150) {
+				url = url.substr(0, l);
+			}
+			auto s = url.find("//");
+			if (s > 100) {
+				vector <string> datas = LinkDatas(link);
+				url = datas[0] + "//" + datas[1] + url;
+			}
+			bool usedURL = false;
+			for (const auto& i : findsLinks) {
+					if (i == url){
+						usedURL = true;
+					}
 			}
 			if (usedURL == false) {
+				findsLinks.emplace_back(url);
 				s_queue.emplace(url);
 			}
 			xmlFree(html_url);
@@ -240,7 +276,6 @@ void Spider::LoadtoDB(string& result, const string& link) {
 			words[word]++;
 		}
 	}
-	int x = 1;
 	unique_lock<mutex> lock(mtx);
 	database.SaveDatasToDB(words, link, db);
 	lock.unlock();

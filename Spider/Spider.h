@@ -38,6 +38,7 @@ private:
 	string port_;
 	mutex mtx;
 	vector<string>usedLinks;
+	vector<string>findsLinks;
 	const int size_thread = thread::hardware_concurrency();
 	vector<thread> threads;
 	condition_variable cond;
