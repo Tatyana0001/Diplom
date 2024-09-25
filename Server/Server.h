@@ -28,15 +28,17 @@ public:
 	void createResponsePost();
 	http::request<http::dynamic_body> req;
 	http::response<http::dynamic_body> res;
-	pqxx::result SearchDB(vector<string> str);
+	vector<pair<string, int>> SearchDB(vector<string> str);
 	beast::flat_buffer buffer;
 	tcp::socket socket_;
-	Server(tcp::socket socket);
+	Server(tcp::socket socket, IniParser* IniParser);
+	
 	void CheckDeadline();
 	
 	net::steady_timer deadline_{
 		socket_.get_executor(), chrono::seconds(60) };
 private:
 	void ReadRequest();
+	IniParser* IniParser_;
 	string host_, dbname_, user_, password_, port_;
 };

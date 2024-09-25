@@ -1,5 +1,6 @@
 #include "Server.h"
 
+
 void Server::start() {
     ReadRequest();
     CheckDeadline();
@@ -21,7 +22,9 @@ void Server::ReadRequest(){
     
 }
 
-Server::Server(tcp::socket socket) : socket_(move(socket)) {}
+Server::Server(tcp::socket socket, IniParser* IniParser) : socket_(move(socket)), IniParser_{ IniParser } {}
+
+
 
 void Server::ProcessRequest() {
     try {
@@ -121,7 +124,7 @@ void Server::createResponsePost() {
             str.push_back(word);
         }
     }
-    pqxx::result DBRes = SearchDB(str);
+    vector<pair<string, int>> DBRes = SearchDB(str);
     res.set(http::field::content_type, "text/html");
     beast::ostream(res.body()) << "<html>\n"
         << "<head><meta charset=\"UTF-8\"><title>Search Result</title></head>\n"
@@ -132,9 +135,16 @@ void Server::createResponsePost() {
         << "<p  style=\"color:blue\">Result:<p>\n"
         << "<ul>\n";
     if (DBRes.size() > 0) {
-        for (const auto& url : DBRes) {
-            beast::ostream(res.body()) << "<li><a href=\"" << url["url"].c_str() << "\">" << url["url"].c_str() << "</a></li>";
+        if (DBRes.size() > 10) {
+            for (auto i = 0; i < 10; i++) {
+                beast::ostream(res.body()) << "<li><a href=\"" << DBRes[i].first << "\">" << DBRes[i].first << "</a></li>";
+            }
         }
+        else {
+        for (const auto& url : DBRes) {
+            beast::ostream(res.body()) << "<li><a href=\"" << url.first << "\">" << url.first << "</a></li>";
+        }
+    }
     }
     else {
         beast::ostream(res.body()) << "<p>"
@@ -146,25 +156,40 @@ void Server::createResponsePost() {
         << "</html>\n";
 }
 
-pqxx::result Server::SearchDB(vector<string> str){
-    IniParser IniParser("../../../../Spider/data.ini");
-    host_ = IniParser.get_data("host");
-    port_ = IniParser.get_data("port");
-    dbname_ = IniParser.get_data("dbname");
-    user_ = IniParser.get_data("user");
-    password_ = IniParser.get_data("password");
+vector<pair<string, int>> Server::SearchDB(vector<string> str){
+    host_ = IniParser_->get_data("host");
+    port_ = IniParser_->get_data("port");
+    dbname_ = IniParser_->get_data("dbname");
+    user_ = IniParser_->get_data("user");
+    password_ = IniParser_->get_data("password");
     try {
         pqxx::connection c("host = " + host_ + " port = " + port_ + " dbname = " + dbname_ + " user = " + user_ + " password = " + password_);
         pqxx::work tx(c);
-        string findWord;
-        for (auto s : str) {
-            findWord += tx.quote(s) + ",";
+        map<string, int> findURL;
+        vector<pair<string, int>> sortedURL;
+        if (str.size() > 0) {
+            for (const auto& s : str) {
+                for (auto [url, frequency] : tx.query<string, int>(
+                    "SELECT DISTINCT documents.url, words.frequency FROM words INNER JOIN words_from_documents ON words_from_documents.id_words = words.id "
+                    "INNER JOIN documents ON documents.id = words_from_documents.id_documents WHERE words.word = '" + s + "' GROUP BY documents.url, words.frequency;"))
+                {
+                    map<string, int>::iterator it = findURL.find(url);
+                    if (it == findURL.end()) {
+                        findURL[url] = frequency;
+                    }
+                    else {
+                        findURL[url] += frequency;
+                    }
+                }
+            }
+
+            for (auto pair : findURL) {
+                sortedURL.push_back(pair);
+            }
+            sort(sortedURL.begin(), sortedURL.end(), [](pair<string, int>& a, pair<string, int>& b) { return a.second > b.second; });
         }
-        findWord.pop_back();
-        string str1 = tx.quote(str);
-        pqxx::result RES = tx.exec("SELECT d.url, SUM(w.frequency) FROM words_from_documents wd JOIN words w ON wd.id_words = w.id "
-            "JOIN documents d ON wd.id_documents = d.id WHERE w.word IN (" + findWord + ") GROUP BY d.url ORDER BY SUM(w.frequency) DESC LIMIT 10;"); 
-        return RES;
+        tx.commit();
+        return sortedURL;
     }
     catch (pqxx::sql_error e) {
         cout << "SQL error" << e.what() << "\n";

@@ -25,6 +25,7 @@ void Spider::startSpider() {
 				auto link = s_queue.front();
 				usedLinks.push_back(link);
 				s_queue.pop();
+				
 				string HTML = loadHTTP(link);
 				lock.unlock();
 				ParserURL(HTML, link);
@@ -197,6 +198,11 @@ void Spider::ParserURL(const string& html, const string& link) {
 						usedURL = true;
 					}
 			}
+			for (const auto& j : usedLinks) {
+				if (j == url) {
+					usedURL = true;
+				}
+			}
 			if (usedURL == false) {
 				findsLinks.emplace_back(url);
 				s_queue.emplace(url);
@@ -240,6 +246,9 @@ string Spider::DeletePunct(string& result) {
 	boost::replace_all(result, ".", " ");
 	boost::replace_all(result, ",", " ");
 	boost::replace_all(result, "-", " ");
+	boost::replace_all(result, "_", " ");
+	boost::replace_all(result, "+", " ");
+	boost::replace_all(result, "*", " ");
 	boost::replace_all(result, "[", " ");
 	boost::replace_all(result, "]", " ");
 	boost::replace_all(result, "(", " ");
@@ -247,6 +256,10 @@ string Spider::DeletePunct(string& result) {
 	boost::replace_all(result, ";", " ");
 	boost::replace_all(result, ":", " ");
 	boost::replace_all(result, "/", " ");
+	boost::replace_all(result, "\\", " ");
+	boost::replace_all(result, ">", " ");
+	boost::replace_all(result, "<", " ");
+	boost::replace_all(result, "%", " "); 
 	boost::replace_all(result, "#", " ");
 	boost::replace_all(result, "'", " ");
 	boost::replace_all(result, "$", " ");

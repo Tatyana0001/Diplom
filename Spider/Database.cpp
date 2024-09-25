@@ -48,12 +48,13 @@ int Database::sql(const std::string& str) {
 }
     
 int Database::create() {
-    return sql("CREATE TABLE IF NOT EXISTS documents (id SERIAL PRIMARY KEY, url VARCHAR(250) NOT NULL);"
-        "CREATE TABLE IF NOT EXISTS words (id SERIAL PRIMARY KEY, word VARCHAR(100) NOT NULL, frequency INTEGER NOT NULL);"
+    return sql("CREATE TABLE IF NOT EXISTS documents (id SERIAL PRIMARY KEY UNIQUE, url VARCHAR(250) NOT NULL UNIQUE);"
+        "CREATE TABLE IF NOT EXISTS words (id SERIAL PRIMARY KEY UNIQUE, word VARCHAR(100) NOT NULL, frequency INTEGER NOT NULL);"
         "CREATE TABLE IF NOT EXISTS words_from_documents ("
-        "id SERIAL PRIMARY KEY, "
-        "id_documents INTEGER NOT NULL REFERENCES documents(id), "
-        "id_words INTEGER NOT NULL REFERENCES words(id))");
+        "id_documents INTEGER NOT NULL, "
+        "id_words INTEGER NOT NULL, "
+        "FOREIGN KEY(id_documents) REFERENCES documents(id), "
+        "FOREIGN KEY(id_words) REFERENCES words(id));");
 }
 
 
@@ -68,10 +69,10 @@ void Database::SaveDatasToDB(map<string, int> words, const string& link, map<str
         }
         sql("INSERT INTO documents(url) VALUES('" + link + "');");
         for (auto& i : words) {
-            sql("INSERT INTO words(word, frequency) VALUES('" + i.first + "', '" + to_string(i.second) + "');");
-            sql("INSERT INTO words_from_documents(id_documents, id_words)"
-                "SELECT d.id, w.id FROM documents d CROSS JOIN words w"
-                " WHERE d.url = '" + link + "' AND w.word =  '" + i.first + "'");
+            sql("INSERT INTO words(id, word, frequency) VALUES('" + to_string(id_word) + "', '" + i.first + "', '" + to_string(i.second) + "'); ");
+            sql("INSERT INTO words_from_documents(id_documents, id_words) "
+                "VALUES((SELECT id FROM documents WHERE url = '" + link + "'), '" + to_string(id_word) + "');");
+            id_word++;
         }
 
     }

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 project(Server)
-add_executable (Server main.cpp Server.h Server.cpp ../Spider/Database.cpp ../Spider/Database.h ../Spider/data.ini ../Spider/IniParser.cpp ../Spider/IniParser.h)
+add_executable (Server main.cpp Server.h Server.cpp ../Spider/Database.cpp ../Spider/Database.h ../Spider/data.ini ../Spider/IniParser.cpp ../Spider/IniParser.h )
 add_subdirectory(C:/Users/kisa7/libpqxx-7.9.1 libpqxx-build)
 target_compile_features(Server PRIVATE cxx_std_17)
 target_link_libraries(Server pqxx)

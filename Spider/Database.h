@@ -14,10 +14,12 @@ public:
     map<string, string> db_datas;
     Database(IniParser& Iniparser);
     Database() = default;
+    vector<string> links_;
     Database(const Database&) = delete;
     Database& operator=(const Database&) = delete;
     pqxx::connection* c{ nullptr };
     int create();
     void SaveDatasToDB(map<string, int> words, const string& link, map<string, string> db_datas);
     ~Database();
+    int id_word = 1;
 };
